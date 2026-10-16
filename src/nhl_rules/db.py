@@ -1,5 +1,7 @@
 """Database access."""
 
+from importlib.resources import files
+
 import psycopg
 
 from nhl_rules.config import get_settings
@@ -7,6 +9,12 @@ from nhl_rules.config import get_settings
 
 def connect(**kwargs) -> psycopg.Connection:
     return psycopg.connect(get_settings().database_url, **kwargs)
+
+
+def apply_schema() -> None:
+    """Create tables and indexes if they don't exist (idempotent)."""
+    with connect() as conn:
+        conn.execute(files("nhl_rules").joinpath("schema.sql").read_text())
 
 
 def check_database() -> tuple[bool, str]:

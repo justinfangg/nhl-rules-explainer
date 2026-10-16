@@ -8,7 +8,9 @@ from typing import Annotated
 import httpx
 import typer
 
+from nhl_rules import glossary as g
 from nhl_rules.config import get_settings
+from nhl_rules.db import apply_schema
 
 app = typer.Typer(help="NHL Rules Explainer CLI.", no_args_is_help=True)
 
@@ -65,3 +67,24 @@ def ingest(
     typer.echo(f"Embedding with {model} and loading season {season}...")
     n = load(chunks, season, model)
     typer.secho(f"Loaded {n} rows in {time.monotonic() - start:.0f}s.", fg="green")
+    if g.DEFAULT_PATH.exists():
+        glossary(g.DEFAULT_PATH, season)
+
+
+@app.command()
+def glossary(
+    path: Annotated[Path, typer.Argument(exists=True, dir_okay=False)] = g.DEFAULT_PATH,
+    season: Annotated[str | None, typer.Option(help="Season to check rule numbers against")] = None,
+) -> None:
+    """Validate the fan-term glossary against the loaded rules and load it (runs locally)."""
+    season = season or get_settings().rulebook_season
+    terms = g.read_terms(path)
+    apply_schema()
+    missing = g.missing_rules(terms, season)
+    if missing:
+        for term, nums in missing.items():
+            typer.secho(f"✗ {term!r}: no rule {', '.join(nums)} in season {season}", fg="red")
+        typer.secho(f"Glossary not loaded: {len(missing)} term(s) cite unknown rules.", fg="red")
+        raise typer.Exit(1)
+    n = g.load(terms)
+    typer.secho(f"Loaded {n} glossary terms; all rule numbers exist in {season}.", fg="green")

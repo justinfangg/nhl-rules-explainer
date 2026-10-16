@@ -82,6 +82,34 @@ def test_parse_rules_structure_and_paragraphs():
     ]
 
 
+def test_subsection_titles_that_wrap_or_hold_the_separator():
+    chunks = by_number(
+        parse_rules(
+            [
+                rule(10, "Rule 38 – Coach’s Challenge"),
+                line(
+                    20, span("38.10", 40), span("Applicable Standards for “Missed", 60, bold=True)
+                ),
+                line(
+                    30,
+                    span("Offensive Zone” Challenge", 60, bold=True),
+                    span(" – The standard", 160),
+                ),
+                body(40, "for overturning."),
+                line(
+                    50,
+                    span("38.11", 40),
+                    span("Procedure –", 60, bold=True),
+                    span(" As soon as", 110),
+                ),
+            ]
+        )
+    )
+    assert chunks["38.10"].title == "Applicable Standards for “Missed Offensive Zone” Challenge"
+    assert chunks["38.10"].text == "The standard for overturning."
+    assert (chunks["38.11"].title, chunks["38.11"].text) == ("Procedure", "As soon as")
+
+
 def test_cross_reference_note_and_repeated_rule_are_skipped():
     chunks = by_number(
         parse_rules(

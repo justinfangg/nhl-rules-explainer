@@ -155,10 +155,14 @@ def _subsection_start(line: Line, rule: str | None) -> tuple[str, str, str] | No
         i += 1
     if not title_spans:
         return None
-    title = join_spans(title_spans).strip()
     rest = join_spans(line.spans[i:])
-    rest = re.sub(r"^\s*[–-]\s*", "", rest)
-    return f"{m.group(1)}.{m.group(2)}", title, rest
+    return f"{m.group(1)}.{m.group(2)}", *_split_title(title_spans, rest)
+
+
+def _split_title(title_spans: list[Span], rest: str) -> tuple[str, str]:
+    """Clean a bold title and the text after it; the " - " separator may sit in either."""
+    title = re.sub(r"\s*[–-]\s*$", "", join_spans(title_spans).strip())
+    return title, re.sub(r"^\s*[–-]\s*", "", rest)
 
 
 def _title_case(s: str) -> str:
@@ -292,6 +296,7 @@ def parse_rules(lines: list[Line]) -> list[Chunk]:
     current: Chunk | None = None  # None means "skip lines until the next header"
     para = _ParagraphBuilder()
     signal_lines: list[Line] = []
+    title_open = False  # the last subsection title may wrap onto the next line
 
     for line in lines:
         text = line.text.strip()
@@ -322,6 +327,17 @@ def parse_rules(lines: list[Line]) -> list[Chunk]:
                 rule, current = None, None
             continue
 
+        if title_open and current is not None and line.spans[0].bold:
+            # e.g. 38.10 "Applicable Standards for “Missed Game Stoppage Event in the"
+            #            "Offensive Zone” Challenge – The standard for ..."
+            n = next((i for i, sp in enumerate(line.spans) if not sp.bold), len(line.spans))
+            more, rest = _split_title(line.spans[:n], join_spans(line.spans[n:]))
+            current.title = f"{current.title} {more}"
+            title_open = not rest.strip()
+            para.add(current, line, rest, body_x[line.page])
+            continue
+        title_open = False
+
         if sub := _subsection_start(line, rule):
             number, title, rest = sub
             if number in seen:
@@ -331,6 +347,7 @@ def parse_rules(lines: list[Line]) -> list[Chunk]:
             current = Chunk(number, rule, title, section)
             chunks.append(current)
             para.add(current, line, rest, body_x[line.page])
+            title_open = not rest.strip()
             continue
 
         if current is not None:

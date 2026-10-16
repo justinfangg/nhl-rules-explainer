@@ -22,3 +22,11 @@ CREATE TABLE IF NOT EXISTS rules (
 );
 
 CREATE INDEX IF NOT EXISTS rules_tsv_idx ON rules USING gin (tsv);
+
+-- Hand-curated fan language -> rulebook terms (data/glossary.json), loaded by `nhl glossary`.
+CREATE TABLE IF NOT EXISTS glossary (
+    id              serial PRIMARY KEY,
+    term            text NOT NULL UNIQUE,        -- fan phrase, lowercase: 'too many men'
+    rule_numbers    text[] NOT NULL CHECK (cardinality(rule_numbers) > 0),
+    canonical_term  text NOT NULL                -- rulebook wording: 'too many men on the ice'
+);

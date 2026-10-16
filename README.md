@@ -28,6 +28,12 @@ subsection (e.g. `56.2`), and one per entry in the rulebook's Glossary of Terms
 (`Glossary: Possession of the Puck`) into the `rules` table, with an embedding
 and a generated `tsvector`. Re-running replaces that season's rows.
 
+`data/glossary.json` maps fan language to rulebook terms and rule numbers
+("too many men" → *too many men on the ice*, Rule 74). `nhl ingest` loads it
+after the rules; after editing it, run `uv run nhl glossary` to reload. Loading
+fails, and leaves the table unchanged, if any term cites a rule number that
+isn't in the loaded season.
+
 The parser reads the PDF span by span and uses fonts and positions for structure.
 Page ranges and a few layout special cases (the Rule 29 signals table, the
 two-column list in 73.2, right-margin rule references) are specific to the
@@ -44,9 +50,11 @@ src/nhl_rules/
   schema.sql     `rules` table, applied by `nhl ingest`
   db.py          Postgres connection and health checks
   embeddings.py  local sentence-transformers model
+  glossary.py    fan-term glossary: validation and loading
   ingest/        PDF parser and database loader
   api/main.py    FastAPI app
   cli.py         `nhl` CLI: an HTTP client over the API, plus local `ingest`
+data/glossary.json  hand-curated fan terms
 db/init/         SQL run when the database volume is first created
 tests/
 ```

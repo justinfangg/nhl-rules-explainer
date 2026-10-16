@@ -1,10 +1,8 @@
 """Write parsed rulebook chunks to Postgres."""
 
-from importlib.resources import files
-
 from pgvector.psycopg import register_vector
 
-from nhl_rules.db import connect
+from nhl_rules.db import apply_schema, connect
 from nhl_rules.embeddings import embed_passages
 from nhl_rules.ingest.parser import Chunk
 
@@ -18,12 +16,6 @@ def embedding_input(chunk: Chunk, titles: dict[str, str]) -> str:
     else:
         heading = f"Rule {chunk.rule_number}: {chunk.title}"
     return f"{heading}\n{chunk.text}".strip()
-
-
-def apply_schema() -> None:
-    sql = files("nhl_rules").joinpath("schema.sql").read_text()
-    with connect() as conn:
-        conn.execute(sql)
 
 
 def load(chunks: list[Chunk], season: str, model_name: str) -> int:
