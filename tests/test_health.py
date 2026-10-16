@@ -8,9 +8,19 @@ from nhl_rules.api import main
 
 def test_health_ok(monkeypatch):
     monkeypatch.setattr(main, "check_database", lambda: (True, "connected, pgvector 0.8.0"))
+    monkeypatch.setattr(main, "check_rules", lambda season, model: (True, "615 rows"))
     resp = TestClient(main.app).get("/health")
     assert resp.status_code == 200
     assert resp.json()["status"] == "ok"
+    assert set(resp.json()["checks"]) == {"database", "rules"}
+
+
+def test_health_rules_not_loaded(monkeypatch):
+    monkeypatch.setattr(main, "check_database", lambda: (True, "connected"))
+    monkeypatch.setattr(main, "check_rules", lambda season, model: (False, "no rules loaded"))
+    resp = TestClient(main.app).get("/health")
+    assert resp.status_code == 503
+    assert resp.json()["checks"]["rules"] == {"ok": False, "detail": "no rules loaded"}
 
 
 def test_health_db_down(monkeypatch):

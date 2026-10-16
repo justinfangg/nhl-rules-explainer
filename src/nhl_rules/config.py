@@ -10,6 +10,9 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql://nhl:nhl@localhost:5433/nhl_rules"
     nhl_api_url: str = "http://localhost:8000"
+    # The rulebook season the API answers from.
+    rulebook_season: str = "2026-27"
+    embedding_model: str = "BAAI/bge-small-en-v1.5"
 
 
 @lru_cache

@@ -1,5 +1,10 @@
 """`nhl` command-line client. A thin wrapper over the HTTP API."""
 
+import re
+import time
+from pathlib import Path
+from typing import Annotated
+
 import httpx
 import typer
 
@@ -35,3 +40,28 @@ def health() -> None:
     healthy = body["status"] == "ok"
     typer.secho("healthy" if healthy else "unhealthy", fg="green" if healthy else "red", bold=True)
     raise typer.Exit(0 if healthy else 1)
+
+
+@app.command()
+def ingest(
+    pdf: Annotated[Path, typer.Argument(exists=True, dir_okay=False, help="Rulebook PDF")],
+    season: Annotated[str, typer.Option(help='Season label, e.g. "2026-27"')],
+) -> None:
+    """Parse the rulebook PDF and load it into the database (runs locally, not via the API)."""
+    # Imported here so other commands don't pay for loading PyMuPDF and torch.
+    from nhl_rules.ingest.loader import load
+    from nhl_rules.ingest.parser import parse_pdf
+
+    if not re.fullmatch(r"\d{4}-\d{2}", season):
+        raise typer.BadParameter('expected a season like "2026-27"', param_hint="--season")
+
+    model = get_settings().embedding_model
+    start = time.monotonic()
+    chunks = parse_pdf(pdf)
+    rules = sum(1 for c in chunks if c.parent_number is None and c.section != "Glossary of Terms")
+    subsections = sum(1 for c in chunks if c.parent_number)
+    definitions = sum(1 for c in chunks if c.section == "Glossary of Terms")
+    typer.echo(f"Parsed {rules} rules, {subsections} subsections, {definitions} definitions.")
+    typer.echo(f"Embedding with {model} and loading season {season}...")
+    n = load(chunks, season, model)
+    typer.secho(f"Loaded {n} rows in {time.monotonic() - start:.0f}s.", fg="green")

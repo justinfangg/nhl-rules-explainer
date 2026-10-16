@@ -11,6 +11,9 @@ dependencies = [
     "psycopg[binary]>=3.2",
     "typer>=0.15",
     "httpx>=0.28",
+    "pymupdf>=1.28.2",
+    "sentence-transformers>=3.3",
+    "pgvector>=0.3",
 ]
 
 [project.scripts]
@@ -35,3 +38,9 @@ select = ["E", "F", "I", "B", "UP"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    # Third-party noise: PyMuPDF's SWIG bindings and Starlette's TestClient.
+    "ignore:builtin type .* has no __module__ attribute:DeprecationWarning",
+    "ignore::DeprecationWarning:fastapi.testclient",
+    "ignore:Using `httpx` with `starlette.testclient`",
+]
