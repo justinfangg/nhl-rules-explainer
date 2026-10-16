@@ -1,0 +1,1 @@
+"""NHL Rules Explainer."""
