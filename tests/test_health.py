@@ -7,12 +7,13 @@ from nhl_rules.api import main
 
 
 def test_health_ok(monkeypatch):
+    monkeypatch.setattr(main, "_model_status", (True, "model loaded"))
     monkeypatch.setattr(main, "check_database", lambda: (True, "connected, pgvector 0.8.0"))
     monkeypatch.setattr(main, "check_rules", lambda season, model: (True, "615 rows"))
     resp = TestClient(main.app).get("/health")
     assert resp.status_code == 200
     assert resp.json()["status"] == "ok"
-    assert set(resp.json()["checks"]) == {"database", "rules"}
+    assert set(resp.json()["checks"]) == {"database", "rules", "embedding_model"}
 
 
 def test_health_rules_not_loaded(monkeypatch):
@@ -24,12 +25,16 @@ def test_health_rules_not_loaded(monkeypatch):
 
 
 def test_health_db_down(monkeypatch):
+    monkeypatch.setattr(main, "_model_status", (True, "model loaded"))
     monkeypatch.setattr(main, "check_database", lambda: (False, "cannot connect"))
     resp = TestClient(main.app).get("/health")
     assert resp.status_code == 503
     assert resp.json() == {
         "status": "unhealthy",
-        "checks": {"database": {"ok": False, "detail": "cannot connect"}},
+        "checks": {
+            "database": {"ok": False, "detail": "cannot connect"},
+            "embedding_model": {"ok": True, "detail": "model loaded"},
+        },
     }
 
 
@@ -62,3 +67,12 @@ def test_cli_api_unreachable(monkeypatch):
     monkeypatch.setattr(cli.httpx, "get", _fake_get(0, error=httpx.ConnectError("refused")))
     result = CliRunner().invoke(cli.app, ["health"])
     assert result.exit_code == 1
+
+
+def test_health_model_not_loaded(monkeypatch):
+    monkeypatch.setattr(main, "_model_status", (False, "not loaded"))
+    monkeypatch.setattr(main, "check_database", lambda: (True, "connected"))
+    monkeypatch.setattr(main, "check_rules", lambda season, model: (True, "615 rows"))
+    resp = TestClient(main.app).get("/health")
+    assert resp.status_code == 503
+    assert resp.json()["checks"]["embedding_model"]["ok"] is False

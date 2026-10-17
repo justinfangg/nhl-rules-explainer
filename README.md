@@ -40,6 +40,21 @@ two-column list in 73.2, right-margin rule references) are specific to the
 2026-27 book; `tests/test_parser.py` checks them against the real PDF when it's
 present.
 
+## Using it
+
+```sh
+uv run nhl rule 55.1                 # one subsection, with its rule's title
+uv run nhl rule 55                   # every subsection of Rule 55
+curl 'localhost:8000/search?q=goalie+in+the+corner&mode=hybrid&k=8'   # raw retrieval
+uv run nhl eval --retrieval-only     # recall@5/@8 for keyword, vector and hybrid
+```
+
+Retrieval searches subsections and glossary definitions. Hybrid mode merges the
+top 50 keyword (Postgres full-text, any-term match) and vector (cosine) results
+with reciprocal rank fusion and keeps the top 8; each hit carries its parent
+rule's title. Rule numbers named in a question are looked up exactly and fill
+the first slots. Eval reports go to `eval/results/` (not committed).
+
 Run tests and lint with `uv run pytest` and `uv run ruff check .`.
 
 ## Layout
@@ -50,6 +65,8 @@ src/nhl_rules/
   schema.sql     `rules` table, applied by `nhl ingest`
   db.py          Postgres connection and health checks
   embeddings.py  local sentence-transformers model
+  retrieval.py   exact lookup, keyword / vector / hybrid search
+  evals/         eval cases and the retrieval eval runner
   glossary.py    fan-term glossary: validation and loading
   ingest/        PDF parser and database loader
   api/main.py    FastAPI app

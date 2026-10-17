@@ -88,3 +88,56 @@ def glossary(
         raise typer.Exit(1)
     n = g.load(terms)
     typer.secho(f"Loaded {n} glossary terms; all rule numbers exist in {season}.", fg="green")
+
+
+@app.command()
+def rule(number: Annotated[str, typer.Argument(help='Rule number, e.g. "56.1" or "56"')]) -> None:
+    """Print one rule (with its parent rule's title), or all subsections of a rule."""
+    url = get_settings().nhl_api_url
+    try:
+        resp = httpx.get(f"{url}/rules/{number}", timeout=10)
+    except httpx.HTTPError as e:
+        typer.secho(f"API unreachable at {url}: {e}", fg="red", err=True)
+        raise typer.Exit(1) from None
+    if resp.status_code == 404:
+        typer.secho(f"No rule {number}.", fg="red", err=True)
+        raise typer.Exit(1)
+    resp.raise_for_status()
+    body = resp.json()
+    for r in body["subsections"] or [body["rule"]]:
+        parent = (
+            f"Rule {r['parent']['rule_number']} – {r['parent']['title']} › " if r["parent"] else ""
+        )
+        typer.secho(f"\n{parent}{r['rule_number']} {r['title']}", bold=True)
+        typer.secho(r["section"], dim=True)
+        typer.echo(r["text"])
+
+
+@app.command("eval")
+def eval_(
+    retrieval_only: Annotated[
+        bool, typer.Option("--retrieval-only", help="Measure retrieval recall only")
+    ] = False,
+    mode: Annotated[
+        str | None, typer.Option(help="keyword, vector or hybrid (default: all three)")
+    ] = None,
+    cases_path: Annotated[Path, typer.Option("--cases")] = Path("eval/cases.json"),
+) -> None:
+    """Run the eval set and write a report to eval/results/ (runs locally)."""
+    from nhl_rules.evals import retrieval as rev
+    from nhl_rules.evals.cases import read_cases
+    from nhl_rules.retrieval import MODES
+
+    if not retrieval_only:
+        typer.secho("Only --retrieval-only is available until generation is built.", fg="red")
+        raise typer.Exit(2)
+    if mode is not None and mode not in MODES:
+        raise typer.BadParameter(f"expected one of {', '.join(MODES)}", param_hint="--mode")
+
+    modes = [mode] if mode else list(MODES)
+    cases = read_cases(cases_path)
+    by_mode = rev.run(cases, modes)
+    for m, results in by_mode.items():
+        r5, r8 = (rev.recall(results, k) for k in rev.KS)
+        typer.echo(f"{m:<8} recall@5 {r5:6.1%}   recall@8 {r8:6.1%}   (n={len(results)})")
+    typer.secho(f"Report: {rev.write_report(by_mode)}", fg="green")
