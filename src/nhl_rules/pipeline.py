@@ -44,11 +44,10 @@ def ask(question: str, debug: bool = False) -> Answer:
     hits = retrieval.search(
         understanding.rewritten_query, "hybrid", explicit_rules=understanding.explicit_rules
     )
-    texts = {h.rule_number: h.text for h in hits}
-    titles = {h.rule_number: h.title for h in hits}
-
     # 4-5. Generate (LLM call 2), Verify, at most one revision
     generation = Generation(question, understanding.question_type, hits)
+    texts = {r.rule_number: r.text for r in generation.context_rules}
+    titles = {r.rule_number: r.title for r in generation.context_rules}
     attempts: list[Attempt] = []
     generated: GeneratedAnswer | None = generation.first()
     for revision in (False, True):
@@ -92,6 +91,7 @@ def ask(question: str, debug: bool = False) -> Answer:
                 )
                 for h in hits
             ],
+            context_rules=[r.rule_number for r in generation.context_rules],
             verification=attempts,
             usage=asdict(usage),
             seconds=round(time.monotonic() - start, 2),

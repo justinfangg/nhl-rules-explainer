@@ -278,3 +278,16 @@ def test_rulebook_layout_edge_cases(rulebook):
     # 56.1's definition list keeps one paragraph per label.
     assert "\nPick: A “pick” is" in rulebook["56.1"].text
     assert len([c for c in rulebook.values() if c.section == "Glossary of Terms"]) == 14
+
+
+def test_check_parsed_rejects_non_rulebook(tmp_path):
+    from nhl_rules.ingest.parser import RulebookParseError, check_parsed
+
+    tiny = parse_rules([rule(10, "Rule 1 – Rink"), sub(20, "1.1", "Rink", " - Text.")])
+    with pytest.raises(RulebookParseError, match="found 1 rules"):
+        check_parsed(tiny)
+
+    not_pdf = tmp_path / "notes.pdf"
+    not_pdf.write_text("hello")
+    with pytest.raises(RulebookParseError, match="Can't open"):
+        parse_pdf(not_pdf)

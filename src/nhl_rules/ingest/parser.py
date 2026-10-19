@@ -103,9 +103,14 @@ def extract_lines(pdf_path: Path, pages: range) -> list[Line]:
     Spans whose baselines are within a few points are merged into one line, so a list
     marker like "(i)" set slightly lower than its text stays on the same line.
     """
-    doc = pymupdf.open(pdf_path)
+    try:
+        doc = pymupdf.open(pdf_path)
+    except Exception as e:
+        raise RulebookParseError(f"Can't open {pdf_path} as a PDF: {e}") from e
     lines: list[Line] = []
     for pn in pages:
+        if pn > doc.page_count:
+            break
         raw: list[tuple[float, float, Span]] = []
         for block in doc[pn - 1].get_text("dict")["blocks"]:
             for line in block.get("lines", []):
@@ -480,7 +485,33 @@ def _split_columns(line: Line) -> list[tuple[str, str]]:
     return [(c, " ".join(t)) for c, t in parts.items()]
 
 
+class RulebookParseError(ValueError):
+    pass
+
+
+def check_parsed(chunks: list[Chunk]) -> None:
+    """Refuse output that doesn't look like the rulebook: a different PDF, or a new
+    season's book whose page ranges or layout moved."""
+    rules = [c for c in chunks if c.parent_number is None and not c.rule_number.startswith("G")]
+    subsections = [c for c in chunks if c.parent_number]
+    problems = []
+    if len(rules) < 80:
+        problems.append(f"found {len(rules)} rules (expected 80+)")
+    if len(subsections) < 400:
+        problems.append(f"found {len(subsections)} subsections (expected 400+)")
+    empty = [c.rule_number for c in subsections if not c.text.strip()]
+    if empty:
+        problems.append(f"{len(empty)} empty subsections, e.g. {', '.join(empty[:5])}")
+    if problems:
+        raise RulebookParseError(
+            "This doesn't look like the NHL rulebook this parser was written for: "
+            + "; ".join(problems)
+            + ". Check the PDF, or the page ranges in ingest/parser.py."
+        )
+
+
 def parse_pdf(pdf_path: Path) -> list[Chunk]:
     rules = parse_rules(extract_lines(pdf_path, RULES_PAGES))
     glossary = parse_glossary(extract_lines(pdf_path, GLOSSARY_PAGES))
+    check_parsed(rules)
     return rules + glossary

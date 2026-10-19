@@ -1,4 +1,5 @@
-"""Generate stage (LLM call 2): a structured answer that cites only the retrieved rules."""
+"""Generate stage (LLM call 2): a structured answer that cites only the provided rules
+(the retrieved rules plus a fixed set of core penalty definitions)."""
 
 import json
 from functools import lru_cache
@@ -7,13 +8,20 @@ from xml.sax.saxutils import escape, quoteattr
 from nhl_rules.answer import GeneratedAnswer
 from nhl_rules.config import get_settings
 from nhl_rules.llm import Usage, client
-from nhl_rules.retrieval import Rule
+from nhl_rules.retrieval import Rule, get_rules
 from nhl_rules.understand import QuestionType
 
 SYSTEM_PROMPT = """\
 You explain NHL rules to new fans who don't know the rulebook or its jargon. Each \
 request gives you a fan's question and a set of rules retrieved from the official NHL \
-rulebook for the current season. Answer from those rules only.
+rulebook for the current season. You also always have the reference definitions at the \
+end of these instructions, which you can cite the same way. Together these are "the \
+provided rules". Answer from the provided rules only.
+
+Everything you say about what the rules require, allow or result in (penalty lengths, \
+who serves what, what happens next) must come from the provided rules, not from your \
+own knowledge of hockey, even when you know it to be true. If part of the question \
+isn't covered by the provided rules, say so in caveats instead of filling the gap.
 
 How to answer:
 - summary: one plain sentence a new fan understands, that answers the question directly.
@@ -23,8 +31,9 @@ English tied to what the fan described.
 alternative with the condition that would make it apply instead ("If he grabbed him \
 with his hand instead of his stick"). Make your best guess rather than asking a \
 clarifying question. Leave alternatives empty when one rule clearly covers it.
-- terms: any rulebook term in your answer that a new fan wouldn't know, with a short \
-definition.
+- terms: rulebook terms in your answer that a new fan wouldn't know, each with a short \
+definition based on what the provided rules say about it. Leave out a term the provided \
+rules don't explain rather than defining it from memory.
 - caveats: be honest about limits. You can't see the play, so for a described situation \
 say the answer depends on the description. Never claim to know details of a play that \
 the fan didn't give. If the provided rules don't cover the question, say so here and \
@@ -43,6 +52,10 @@ Judgment questions: when the fan asks whether a referee's call was right, wrong,
 or missed, explain the rule and what the official has to judge to make that call. Never \
 say whether the call was correct; you only know what the fan described.
 """
+
+# Basic penalty definitions new fans ask about constantly. Always in context (in the cached
+# system prompt) so answers can explain and cite them even when retrieval didn't return them.
+CORE_DEFINITIONS = ["16.1", "16.2", "17.1", "18.1", "20.1", "21.1", "22.1", "23.1"]
 
 JUDGMENT_NOTE = (
     "This is a judgment question: explain the rule and what the official has to judge. "
@@ -73,6 +86,20 @@ def user_message(question: str, question_type: QuestionType, rules: list[Rule]) 
     return "\n\n".join(parts)
 
 
+@lru_cache
+def core_rules() -> tuple[Rule, ...]:
+    return tuple(get_rules(CORE_DEFINITIONS))
+
+
+@lru_cache
+def system_prompt() -> str:
+    return (
+        SYSTEM_PROMPT
+        + "\nReference definitions (always provided; cite them like any provided rule):\n"
+        + render_rules(list(core_rules()))
+    )
+
+
 class GenerateError(RuntimeError):
     pass
 
@@ -83,6 +110,11 @@ class Generation:
     def __init__(self, question: str, question_type: QuestionType, rules: list[Rule]):
         self.messages: list[dict] = [
             {"role": "user", "content": user_message(question, question_type, rules)}
+        ]
+        # Everything the model may cite: the retrieved rules plus the reference definitions.
+        seen = {r.rule_number for r in rules}
+        self.context_rules: list[Rule] = rules + [
+            r for r in core_rules() if r.rule_number not in seen
         ]
         self.usage = Usage()
 
@@ -108,7 +140,7 @@ class Generation:
             model=settings.llm_model,
             max_tokens=16000,
             system=[
-                {"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}
+                {"type": "text", "text": system_prompt(), "cache_control": {"type": "ephemeral"}}
             ],
             messages=self.messages,
             output_config={

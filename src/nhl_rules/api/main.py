@@ -4,7 +4,9 @@ from contextlib import asynccontextmanager
 from typing import Annotated
 
 import anthropic
-from fastapi import FastAPI, HTTPException, Query, Response
+import psycopg
+from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from nhl_rules import pipeline, retrieval
@@ -33,6 +35,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="NHL Rules Explainer", version="0.1.0", lifespan=lifespan)
+
+
+@app.exception_handler(psycopg.OperationalError)
+async def database_unavailable(request: Request, exc: psycopg.OperationalError) -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "Database unavailable. Is Postgres running (docker compose up -d)?"},
+    )
 
 
 class Check(BaseModel):

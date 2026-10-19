@@ -37,6 +37,7 @@ class FakeGeneration:
         self.usage = Usage(output_tokens=100)
 
     def __call__(self, question, question_type, rules):
+        self.context_rules = rules
         return self
 
     def first(self):

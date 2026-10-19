@@ -52,14 +52,18 @@ def ingest(
     """Parse the rulebook PDF and load it into the database (runs locally, not via the API)."""
     # Imported here so other commands don't pay for loading PyMuPDF and torch.
     from nhl_rules.ingest.loader import load
-    from nhl_rules.ingest.parser import parse_pdf
+    from nhl_rules.ingest.parser import RulebookParseError, parse_pdf
 
     if not re.fullmatch(r"\d{4}-\d{2}", season):
         raise typer.BadParameter('expected a season like "2026-27"', param_hint="--season")
 
     model = get_settings().embedding_model
     start = time.monotonic()
-    chunks = parse_pdf(pdf)
+    try:
+        chunks = parse_pdf(pdf)
+    except RulebookParseError as e:
+        typer.secho(f"Not loaded: {e}", fg="red", err=True)
+        raise typer.Exit(1) from None
     rules = sum(1 for c in chunks if c.parent_number is None and c.section != "Glossary of Terms")
     subsections = sum(1 for c in chunks if c.parent_number)
     definitions = sum(1 for c in chunks if c.section == "Glossary of Terms")
@@ -170,7 +174,11 @@ def eval_(
         from nhl_rules.evals import full
 
         typer.echo(f"Running the full pipeline on {len(cases)} cases (makes LLM calls)...")
-        results, usage = full.run(cases, with_judge=not no_judge)
+        try:
+            results, usage = full.run(cases, with_judge=not no_judge)
+        except RuntimeError as e:
+            typer.secho(str(e), fg="red", err=True)
+            raise typer.Exit(1) from None
         m = full.metrics(results)
         typer.echo(f"routing accuracy        {m['routing_accuracy']:6.1%}")
         typer.echo(f"recall@5 / @8           {m['recall@5']:6.1%} / {m['recall@8']:.1%}")

@@ -82,7 +82,7 @@ def evaluate(case: EvalCase, with_judge: bool = True) -> tuple[FullResult, Usage
 
     if with_judge and answer.status == "answered":
         try:
-            rules = get_rules([h.number for h in d.retrieved])
+            rules = get_rules(d.context_rules)  # judge against what Generate was given
             f, judge_usage = judge(case.question, rules, answer)
         except Exception as e:
             r.judge_error = repr(e)

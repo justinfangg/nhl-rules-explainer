@@ -68,6 +68,8 @@ class Attempt(BaseModel):
 class Debug(BaseModel):
     understanding: Understanding
     retrieved: list[RetrievedRule]
+    # Every rule the Generate stage could cite: retrieved rules + core definitions.
+    context_rules: list[str] = []
     verification: list[Attempt]  # one per generation attempt
     usage: dict[str, int]
     seconds: float
