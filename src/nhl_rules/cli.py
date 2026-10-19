@@ -129,17 +129,13 @@ def eval_(
     ] = None,
     cases_path: Annotated[Path, typer.Option("--cases")] = Path("eval/cases.json"),
 ) -> None:
-    """Run the eval set and write a report to eval/results/ (runs locally)."""
+    """Run the eval set and write a report to eval/results/ (runs locally).
+
+    With no flags, runs the full pipeline on every case (LLM calls; costs money)."""
     from nhl_rules.evals import retrieval as rev
     from nhl_rules.evals.cases import read_cases
     from nhl_rules.retrieval import MODES
 
-    if not (retrieval_only or understand):
-        typer.secho(
-            "Only --retrieval-only and --understand are available until generation is built.",
-            fg="red",
-        )
-        raise typer.Exit(2)
     if mode is not None and mode not in MODES:
         raise typer.BadParameter(f"expected one of {', '.join(MODES)}", param_hint="--mode")
 
@@ -167,8 +163,88 @@ def eval_(
         typer.secho(f"Report: {uev.write_report(routed, usage, raw, rewritten)}", fg="green")
         return
 
+    if not retrieval_only:
+        from nhl_rules.evals import full
+
+        typer.echo(f"Running the full pipeline on {len(cases)} cases (makes LLM calls)...")
+        results, usage = full.run(cases)
+        m = full.metrics(results)
+        typer.echo(f"routing accuracy        {m['routing_accuracy']:6.1%}")
+        typer.echo(f"recall@5 / @8           {m['recall@5']:6.1%} / {m['recall@8']:.1%}")
+        typer.echo(f"verification pass rate  {m['verification_pass_rate']:6.1%}  (first try)")
+        typer.echo(f"verified after retry    {m['final_verified_rate']:6.1%}")
+        typer.echo(f"citation accuracy       {m['citation_accuracy']:6.1%}")
+        if m["errors"]:
+            typer.secho(f"{m['errors']} case(s) errored; see the report.", fg="red")
+        cost = usage.cost(get_settings().llm_model)
+        if cost is not None:
+            typer.echo(f"cost ≈ ${cost:.2f}")
+        typer.secho(f"Report: {full.write_report(results, usage)}", fg="green")
+        return
+
     by_mode = rev.run(cases, modes)
     for m, results in by_mode.items():
         r5, r8 = (rev.recall(results, k) for k in rev.KS)
         typer.echo(f"{m:<8} recall@5 {r5:6.1%}   recall@8 {r8:6.1%}   (n={len(results)})")
     typer.secho(f"Report: {rev.write_report(by_mode)}", fg="green")
+
+
+@app.command()
+def ask(
+    question: Annotated[str, typer.Argument(help="Your question, in quotes")],
+    debug: Annotated[bool, typer.Option("--debug", help="Show pipeline internals")] = False,
+) -> None:
+    """Ask a rules question."""
+    url = get_settings().nhl_api_url
+    try:
+        resp = httpx.post(f"{url}/ask", json={"question": question, "debug": debug}, timeout=180)
+    except httpx.HTTPError as e:
+        typer.secho(f"API unreachable at {url}: {e}", fg="red", err=True)
+        raise typer.Exit(1) from None
+    if resp.status_code != 200:
+        detail = resp.json().get("detail", resp.text) if resp.content else resp.status_code
+        typer.secho(f"Error {resp.status_code}: {detail}", fg="red", err=True)
+        raise typer.Exit(1)
+    render_answer(resp.json())
+
+
+def _citations(rules: list[dict]) -> None:
+    for r in rules:
+        typer.secho(f"  Rule {r['number']} · {r['title']}", bold=True)
+        typer.secho(f'    "{r["excerpt"]}"', dim=True)
+
+
+def render_answer(a: dict) -> None:
+    typer.echo()
+    typer.secho(a["summary"], bold=True)
+    if a["status"] == "unverified":
+        for r in a["fallback_rules"]:
+            typer.echo(f"  Rule {r['number']} · {r['title']}")
+    if a["primary"]:
+        typer.echo()
+        _citations(a["primary"]["rules"])
+        typer.echo(f"\n{a['primary']['explanation']}")
+    if a["alternatives"]:
+        typer.secho("\nIt could also be:", bold=True)
+        for alt in a["alternatives"]:
+            typer.secho(f"\n{alt['condition']}:", fg="cyan")
+            _citations(alt["rules"])
+            typer.echo(f"  {alt['explanation']}")
+    if a["terms"]:
+        typer.secho("\nTerms", bold=True)
+        for t in a["terms"]:
+            typer.echo(f"  {t['term']}: {t['definition']}")
+    for c in a["caveats"]:
+        typer.secho(f"\nNote: {c}", fg="yellow")
+    if d := a.get("debug"):
+        u = d["understanding"]
+        typer.secho("\n--- debug ---", dim=True)
+        typer.echo(f"type: {u['question_type']}   explicit rules: {u['explicit_rules'] or '-'}")
+        typer.echo(f"rewritten: {u['rewritten_query']}")
+        for r in d["retrieved"]:
+            ranks = f"kw {r['keyword_rank'] or '-'}, vec {r['vector_rank'] or '-'}"
+            typer.echo(f"  {r['number']:<10} {r['score']:.4f}  ({ranks})  {r['title']}")
+        for i, att in enumerate(d["verification"], start=1):
+            result = "passed" if att["passed"] else "failed: " + "; ".join(att["errors"])
+            typer.echo(f"verification attempt {i}: {result}")
+        typer.echo(f"tokens: {d['usage']}   time: {d['seconds']}s")

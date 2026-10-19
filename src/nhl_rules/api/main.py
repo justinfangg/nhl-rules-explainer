@@ -3,13 +3,17 @@
 from contextlib import asynccontextmanager
 from typing import Annotated
 
+import anthropic
 from fastapi import FastAPI, HTTPException, Query, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from nhl_rules import retrieval
+from nhl_rules import pipeline, retrieval
+from nhl_rules.answer import Answer
 from nhl_rules.config import get_settings
 from nhl_rules.db import check_database, check_rules
 from nhl_rules.embeddings import load_model
+from nhl_rules.generate import GenerateError
+from nhl_rules.understand import UnderstandError
 
 # Embedding model status for /health: (ok, detail). Set at startup.
 _model_status: tuple[bool, str] = (False, "not loaded")
@@ -84,3 +88,22 @@ def search(
     k: Annotated[int, Query(ge=1, le=50)] = retrieval.TOP_K,
 ) -> SearchResponse:
     return SearchResponse(query=q, mode=mode, hits=retrieval.search(q, mode, k))
+
+
+class AskRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+    debug: bool = False
+
+
+@app.post("/ask", response_model=Answer)
+def ask(req: AskRequest) -> Answer:
+    try:
+        return pipeline.ask(req.question, debug=req.debug)
+    except (UnderstandError, GenerateError) as e:
+        raise HTTPException(502, f"Model response unusable: {e}") from e
+    except anthropic.RateLimitError as e:
+        raise HTTPException(503, "Rate limited by the model API; try again shortly.") from e
+    except anthropic.APIStatusError as e:
+        raise HTTPException(502, f"Model API error ({e.status_code}).") from e
+    except anthropic.APIConnectionError as e:
+        raise HTTPException(502, "Could not reach the model API.") from e

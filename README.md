@@ -43,11 +43,20 @@ present.
 ## Using it
 
 ```sh
+uv run nhl ask "why did he get 2 minutes for pulling the guy back with his stick"
+uv run nhl ask "..." --debug           # plus rewrite, retrieved rules, verification, tokens
 uv run nhl rule 55.1                 # one subsection, with its rule's title
 uv run nhl rule 55                   # every subsection of Rule 55
 curl 'localhost:8000/search?q=goalie+in+the+corner&mode=hybrid&k=8'   # raw retrieval
 uv run nhl eval --retrieval-only     # recall@5/@8 for keyword, vector and hybrid
 ```
+
+Each question runs Understand (Claude call 1: slang rewrite, rule numbers, question
+type) → Route (out-of-scope questions get a one-sentence deflection) → Retrieve
+(hybrid, top 8) → Generate (Claude call 2: a structured answer citing only the
+retrieved rules) → Verify (every cited rule was retrieved and every excerpt is a
+word-for-word quote; one retry with the errors, then a fallback listing the
+retrieved rules). `uv run nhl eval` runs all of it on the eval set (about $3).
 
 The Understand stage needs `ANTHROPIC_API_KEY` in `.env` (a key scoped to a
 workspace). `uv run nhl eval --understand` runs it on every eval case and
@@ -72,8 +81,12 @@ src/nhl_rules/
   embeddings.py  local sentence-transformers model
   retrieval.py   exact lookup, keyword / vector / hybrid search
   understand.py  Understand stage: slang rewrite, rule extraction, classification
+  generate.py    Generate stage: the answer prompt and structured-output call
+  verify.py      Verify stage: deterministic citation and excerpt checks
+  pipeline.py    the six stages wired together (POST /ask)
+  answer.py      the answer object
   llm.py         shared Anthropic client and token/cost accounting
-  evals/         eval cases and the retrieval / Understand eval runners
+  evals/         eval cases and the retrieval / Understand / full eval runners
   glossary.py    fan-term glossary: validation and loading
   ingest/        PDF parser and database loader
   api/main.py    FastAPI app

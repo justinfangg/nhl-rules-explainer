@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     anthropic_workspace_id: str | None = None
     llm_model: str = "claude-opus-5-5"
     understand_effort: str = "low"
+    generate_effort: str = "medium"
 
 
 @lru_cache
