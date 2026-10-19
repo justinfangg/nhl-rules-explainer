@@ -49,6 +49,11 @@ curl 'localhost:8000/search?q=goalie+in+the+corner&mode=hybrid&k=8'   # raw retr
 uv run nhl eval --retrieval-only     # recall@5/@8 for keyword, vector and hybrid
 ```
 
+The Understand stage needs `ANTHROPIC_API_KEY` in `.env` (a key scoped to a
+workspace). `uv run nhl eval --understand` runs it on every eval case and
+reports routing accuracy and retrieval recall with the rewritten queries
+(about $0.15 per run on `claude-opus-5-5`).
+
 Retrieval searches subsections and glossary definitions. Hybrid mode merges the
 top 50 keyword (Postgres full-text, any-term match) and vector (cosine) results
 with reciprocal rank fusion and keeps the top 8; each hit carries its parent
@@ -66,7 +71,9 @@ src/nhl_rules/
   db.py          Postgres connection and health checks
   embeddings.py  local sentence-transformers model
   retrieval.py   exact lookup, keyword / vector / hybrid search
-  evals/         eval cases and the retrieval eval runner
+  understand.py  Understand stage: slang rewrite, rule extraction, classification
+  llm.py         shared Anthropic client and token/cost accounting
+  evals/         eval cases and the retrieval / Understand eval runners
   glossary.py    fan-term glossary: validation and loading
   ingest/        PDF parser and database loader
   api/main.py    FastAPI app

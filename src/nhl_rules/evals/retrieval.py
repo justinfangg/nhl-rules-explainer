@@ -21,6 +21,7 @@ class CaseResult:
     type: str
     style: str
     expected: list[str]
+    query: str  # what was searched: the question, or the Understand rewrite
     retrieved: list[str]
     # 1-based rank of the first retrieved rule matching an expected rule, or None
     first_hit: int | None
@@ -29,8 +30,13 @@ class CaseResult:
         return self.first_hit is not None and self.first_hit <= k
 
 
-def evaluate_case(case: EvalCase, mode: Mode) -> CaseResult:
-    retrieved = [h.rule_number for h in search(case.question, mode, k=max(KS))]
+# Per-case search input: (query, explicit rule numbers), e.g. from the Understand stage.
+QueryInput = tuple[str, list[str]]
+
+
+def evaluate_case(case: EvalCase, mode: Mode, query: QueryInput | None = None) -> CaseResult:
+    text, explicit = query or (case.question, [])
+    retrieved = [h.rule_number for h in search(text, mode, k=max(KS), explicit_rules=explicit)]
     first_hit = next(
         (
             i
@@ -40,7 +46,14 @@ def evaluate_case(case: EvalCase, mode: Mode) -> CaseResult:
         None,
     )
     return CaseResult(
-        case.id, case.question, case.type, case.style, case.expected_rules, retrieved, first_hit
+        case.id,
+        case.question,
+        case.type,
+        case.style,
+        case.expected_rules,
+        text,
+        retrieved,
+        first_hit,
     )
 
 
@@ -48,10 +61,14 @@ def recall(results: list[CaseResult], k: int) -> float:
     return sum(r.hit_at(k) for r in results) / len(results) if results else 0.0
 
 
-def run(cases: list[EvalCase], modes: list[Mode]) -> dict[Mode, list[CaseResult]]:
-    """Out-of-scope cases have no expected rules, so they're skipped here."""
+def run(
+    cases: list[EvalCase], modes: list[Mode], queries: dict[str, QueryInput] | None = None
+) -> dict[Mode, list[CaseResult]]:
+    """Out-of-scope cases have no expected rules, so they're skipped here. `queries`
+    overrides what is searched for each case id (default: the raw question)."""
     scored = [c for c in cases if c.type != "out_of_scope"]
-    return {mode: [evaluate_case(c, mode) for c in scored] for mode in modes}
+    q = queries or {}
+    return {mode: [evaluate_case(c, mode, q.get(c.id)) for c in scored] for mode in modes}
 
 
 def summary(results: list[CaseResult]) -> dict:

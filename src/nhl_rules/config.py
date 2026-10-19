@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,6 +14,12 @@ class Settings(BaseSettings):
     # The rulebook season the API answers from.
     rulebook_season: str = "2026-27"
     embedding_model: str = "BAAI/bge-small-en-v1.5"
+    # Claude model for the Understand and Generate stages.
+    anthropic_api_key: SecretStr | None = None
+    # Only needed when the API key isn't scoped to a workspace.
+    anthropic_workspace_id: str | None = None
+    llm_model: str = "claude-opus-5-5"
+    understand_effort: str = "low"
 
 
 @lru_cache

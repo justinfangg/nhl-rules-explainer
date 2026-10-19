@@ -118,6 +118,12 @@ def eval_(
     retrieval_only: Annotated[
         bool, typer.Option("--retrieval-only", help="Measure retrieval recall only")
     ] = False,
+    understand: Annotated[
+        bool,
+        typer.Option(
+            "--understand", help="Run the Understand stage: routing accuracy + rewrite recall"
+        ),
+    ] = False,
     mode: Annotated[
         str | None, typer.Option(help="keyword, vector or hybrid (default: all three)")
     ] = None,
@@ -128,14 +134,39 @@ def eval_(
     from nhl_rules.evals.cases import read_cases
     from nhl_rules.retrieval import MODES
 
-    if not retrieval_only:
-        typer.secho("Only --retrieval-only is available until generation is built.", fg="red")
+    if not (retrieval_only or understand):
+        typer.secho(
+            "Only --retrieval-only and --understand are available until generation is built.",
+            fg="red",
+        )
         raise typer.Exit(2)
     if mode is not None and mode not in MODES:
         raise typer.BadParameter(f"expected one of {', '.join(MODES)}", param_hint="--mode")
 
     modes = [mode] if mode else list(MODES)
     cases = read_cases(cases_path)
+
+    if understand:
+        from nhl_rules.evals import understand as uev
+
+        typer.echo(f"Running Understand on {len(cases)} cases...")
+        routed, usage = uev.run_understand(cases)
+        queries = {r.id: (r.rewritten_query, r.explicit_rules) for r in routed if r.rewritten_query}
+        raw, rewritten = rev.run(cases, modes), rev.run(cases, modes, queries)
+        failed = sum(1 for r in routed if r.error)
+        typer.echo(
+            f"routing accuracy {uev.routing_accuracy(routed):6.1%}"
+            + (f"   ({failed} failed calls)" if failed else "")
+        )
+        for m in modes:
+            r5, w5 = rev.recall(raw[m], 5), rev.recall(rewritten[m], 5)
+            typer.echo(f"{m:<8} recall@5 raw {r5:6.1%} -> rewritten {w5:6.1%}")
+        cost = usage.cost(get_settings().llm_model)
+        if cost is not None:
+            typer.echo(f"Understand cost ≈ ${cost:.2f}")
+        typer.secho(f"Report: {uev.write_report(routed, usage, raw, rewritten)}", fg="green")
+        return
+
     by_mode = rev.run(cases, modes)
     for m, results in by_mode.items():
         r5, r8 = (rev.recall(results, k) for k in rev.KS)
