@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     llm_model: str = "claude-opus-5-5"
     understand_effort: str = "low"
     generate_effort: str = "medium"
+    # Faithfulness judge (eval only).
+    judge_model: str = "claude-opus-5-5"
+    judge_effort: str = "medium"
 
 
 @lru_cache

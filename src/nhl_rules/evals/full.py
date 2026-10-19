@@ -11,8 +11,10 @@ from pathlib import Path
 from nhl_rules.config import get_settings
 from nhl_rules.evals.cases import EvalCase, rule_matches
 from nhl_rules.evals.retrieval import RESULTS_DIR
+from nhl_rules.judge import judge
 from nhl_rules.llm import Usage
 from nhl_rules.pipeline import ask_with_trace
+from nhl_rules.retrieval import get_rules
 
 WORKERS = 6
 
@@ -37,6 +39,11 @@ class FullResult:
     usage: dict = field(default_factory=dict)
     seconds: float = 0.0
     error: str | None = None
+    # Faithfulness judge, for answered cases (None if not judged)
+    faithfulness: int | None = None
+    unsupported_claims: list[str] = field(default_factory=list)
+    judge_rationale: str = ""
+    judge_error: str | None = None
 
     @property
     def in_scope(self) -> bool:
@@ -51,7 +58,7 @@ class FullResult:
         return any(rule_matches(p, e) for p in self.primary for e in self.expected_rules)
 
 
-def evaluate(case: EvalCase) -> tuple[FullResult, Usage]:
+def evaluate(case: EvalCase, with_judge: bool = True) -> tuple[FullResult, Usage]:
     r = FullResult(
         case.id, case.question, case.type, case.style, case.expected_rules, case.acceptable_rules
     )
@@ -72,16 +79,32 @@ def evaluate(case: EvalCase) -> tuple[FullResult, Usage]:
     r.summary = answer.summary
     r.answer = answer.model_dump(exclude={"debug"})
     r.usage, r.seconds = d.usage, d.seconds
+
+    if with_judge and answer.status == "answered":
+        try:
+            rules = get_rules([h.number for h in d.retrieved])
+            f, judge_usage = judge(case.question, rules, answer)
+        except Exception as e:
+            r.judge_error = repr(e)
+        else:
+            r.faithfulness, r.unsupported_claims, r.judge_rationale = (
+                f.score,
+                f.unsupported_claims,
+                f.rationale,
+            )
+            usage = usage + judge_usage
     return r, usage
 
 
-def run(cases: list[EvalCase]) -> tuple[list[FullResult], Usage]:
+def run(cases: list[EvalCase], with_judge: bool = True) -> tuple[list[FullResult], Usage]:
     # Warm the prompt caches with one in-scope case, then run the rest in parallel.
     first = next((c for c in cases if c.type != "out_of_scope"), cases[0])
     rest = [c for c in cases if c is not first]
-    outcomes = [evaluate(first)]
+    outcomes = [evaluate(first, with_judge)]
+    if outcomes[0][0].error:  # e.g. bad key or no credit: don't fail every case the same way
+        raise RuntimeError(f"first case failed, stopping the run: {outcomes[0][0].error}")
     with ThreadPoolExecutor(WORKERS) as pool:
-        outcomes += list(pool.map(evaluate, rest))
+        outcomes += list(pool.map(lambda c: evaluate(c, with_judge), rest))
     total = Usage()
     for _, u in outcomes:
         total = total + u
@@ -96,7 +119,12 @@ def _rate(xs: list[bool]) -> float:
 def metrics(results: list[FullResult]) -> dict:
     scored = [r for r in results if r.in_scope]
     generated = [r for r in results if r.first_attempt_passed is not None]
+    judged = [r.faithfulness for r in results if r.faithfulness is not None]
     return {
+        "faithfulness_mean": sum(judged) / len(judged) if judged else None,
+        "faithfulness_at_least_4": _rate([f >= 4 for f in judged]) if judged else None,
+        "faithfulness_distribution": {s: judged.count(s) for s in range(1, 6)},
+        "n_judged": len(judged),
         "routing_accuracy": _rate([r.predicted_type == r.type for r in results]),
         "recall@5": _rate([r.hit_at(5) for r in scored]),
         "recall@8": _rate([r.hit_at(8) for r in scored]),
@@ -137,13 +165,23 @@ def write_report(results: list[FullResult], usage: Usage, out_dir: Path = RESULT
         f"| Verified after retry | {m['final_verified_rate']:.1%} | "
         f"{m['n_generated']} generated answers |",
         f"| Citation accuracy (primary) | {m['citation_accuracy']:.1%} | in-scope cases |",
-        "| Faithfulness | not measured yet (step 8) | |",
+        (
+            f"| Faithfulness (judge, 1–5) | mean {m['faithfulness_mean']:.2f}; "
+            f"{m['faithfulness_at_least_4']:.0%} scored ≥ 4 | {m['n_judged']} answered cases |"
+            if m["n_judged"]
+            else "| Faithfulness (judge, 1–5) | not run | |"
+        ),
         "",
         "Statuses: " + ", ".join(f"{k} {v}" for k, v in sorted(statuses.items())) + ".",
         f"Tokens: {usage.input_tokens:,} input, {usage.cache_read_tokens:,} cache read, "
         f"{usage.cache_write_tokens:,} cache write, {usage.output_tokens:,} output"
         + (f" (≈ ${cost:.2f})." if cost is not None else "."),
     ]
+    if m["n_judged"]:
+        dist = m["faithfulness_distribution"]
+        lines.append(
+            "Faithfulness scores: " + ", ".join(f"{k}: {dist[k]}" for k in range(5, 0, -1)) + "."
+        )
     if secs:
         lines.append(
             f"Latency for generated answers: median {secs[len(secs) // 2]:.1f}s, "
@@ -177,6 +215,22 @@ def write_report(results: list[FullResult], usage: Usage, out_dir: Path = RESULT
             ("Primary", lambda r: ", ".join(r.primary) or r.status),
             ("Retrieved", lambda r: ", ".join(r.retrieved)),
         ],
+    )
+    table(
+        "Faithfulness ≤ 3",
+        sorted(
+            (r for r in results if r.faithfulness is not None and r.faithfulness <= 3),
+            key=lambda r: r.faithfulness,
+        ),
+        [
+            ("Score", lambda r: r.faithfulness),
+            ("Unsupported claims", lambda r: " • ".join(r.unsupported_claims).replace("|", "/")),
+        ],
+    )
+    table(
+        "Judge errors",
+        [r for r in results if r.judge_error],
+        [("Error", lambda r: r.judge_error)],
     )
     table(
         "Misrouted",

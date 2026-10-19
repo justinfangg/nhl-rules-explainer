@@ -128,6 +128,9 @@ def eval_(
         str | None, typer.Option(help="keyword, vector or hybrid (default: all three)")
     ] = None,
     cases_path: Annotated[Path, typer.Option("--cases")] = Path("eval/cases.json"),
+    no_judge: Annotated[
+        bool, typer.Option("--no-judge", help="Skip the faithfulness judge (cheaper)")
+    ] = False,
 ) -> None:
     """Run the eval set and write a report to eval/results/ (runs locally).
 
@@ -167,13 +170,18 @@ def eval_(
         from nhl_rules.evals import full
 
         typer.echo(f"Running the full pipeline on {len(cases)} cases (makes LLM calls)...")
-        results, usage = full.run(cases)
+        results, usage = full.run(cases, with_judge=not no_judge)
         m = full.metrics(results)
         typer.echo(f"routing accuracy        {m['routing_accuracy']:6.1%}")
         typer.echo(f"recall@5 / @8           {m['recall@5']:6.1%} / {m['recall@8']:.1%}")
         typer.echo(f"verification pass rate  {m['verification_pass_rate']:6.1%}  (first try)")
         typer.echo(f"verified after retry    {m['final_verified_rate']:6.1%}")
         typer.echo(f"citation accuracy       {m['citation_accuracy']:6.1%}")
+        if m["n_judged"]:
+            typer.echo(
+                f"faithfulness            {m['faithfulness_mean']:6.2f}   "
+                f"({m['faithfulness_at_least_4']:.0%} scored >= 4 of {m['n_judged']})"
+            )
         if m["errors"]:
             typer.secho(f"{m['errors']} case(s) errored; see the report.", fg="red")
         cost = usage.cost(get_settings().llm_model)

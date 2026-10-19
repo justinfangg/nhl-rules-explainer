@@ -62,6 +62,13 @@ def get_rule(number: str, season: str | None = None) -> Rule | None:
     return rules[0] if rules else None
 
 
+def get_rules(numbers: list[str], season: str | None = None) -> list[Rule]:
+    """Several rules by number, in the given order, with parent context; unknown numbers
+    are skipped."""
+    with connect() as conn:
+        return _fetch(conn, numbers, _season(season))
+
+
 def get_subsections(number: str, season: str | None = None) -> list[Rule]:
     """All subsections of a top-level rule, in order."""
     with connect() as conn:
